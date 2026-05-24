@@ -1,2 +1,2 @@
 # Project
-Facial Analysis System
+AI Generated Image Detection
