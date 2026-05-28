@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI vs Real — Image Detector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <div class="bg-grid"></div>
+  <div class="noise"></div>
+
+  <main>
+    <header>
+      <div class="badge">v1.0 · Powered by HuggingFace</div>
+      <h1>AI<span class="accent">SCAN</span></h1>
+      <p class="subtitle">Drop any image. Know the truth in seconds.</p>
+    </header>
+
+    <div class="card" id="uploadCard">
+      <!-- Upload Zone -->
+      <div class="upload-zone" id="dropZone">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <div class="upload-icon" id="uploadIcon">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <circle cx="24" cy="24" r="23" stroke="currentColor" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <path d="M24 32V18M24 18L18 24M24 18L30 24" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>Click to upload or drag & drop</span>
+          <small>PNG · JPG · WEBP · up to 10MB</small>
+        </div>
+        <img id="previewImg" src="" alt="Preview" />
+      </div>
+
+      <!-- Error message -->
+      <div class="error-box" id="errorBox" style="display:none;"></div>
+
+      <!-- Analyze Button -->
+      <button class="btn" id="analyzeBtn" disabled>
+        <span id="btnText">Analyze Image</span>
+        <span id="btnLoader" class="loader" style="display:none;"></span>
+      </button>
+    </div>
+
+    <!-- Result Card -->
+    <div class="result-card" id="resultCard" style="display:none;">
+      <div class="result-label" id="resultLabel">—</div>
+      <div class="result-confidence">
+        <span class="conf-num" id="confNum">0</span>
+        <span class="conf-pct">%</span>
+        <span class="conf-tag">confidence</span>
+      </div>
+      <div class="conf-bar-wrap">
+        <div class="conf-bar" id="confBar"></div>
+      </div>
+      <div class="all-scores" id="allScores"></div>
+      <button class="btn btn-reset" id="resetBtn">↺ Analyze another</button>
+    </div>
+
+    <footer>
+      <p>Model: <code>umm-maybe/AI-image-detector</code> · Results are probabilistic, not definitive.</p>
+    </footer>
+  </main>
+
+<script>
+  const dropZone   = document.getElementById('dropZone');
+  const fileInput  = document.getElementById('fileInput');
+  const previewImg = document.getElementById('previewImg');
+  const uploadIcon = document.getElementById('uploadIcon');
+  const analyzeBtn = document.getElementById('analyzeBtn');
+  const btnText    = document.getElementById('btnText');
+  const btnLoader  = document.getElementById('btnLoader');
+  const errorBox   = document.getElementById('errorBox');
+  const resultCard = document.getElementById('resultCard');
+  const uploadCard = document.getElementById('uploadCard');
+  const resetBtn   = document.getElementById('resetBtn');
+  const resultLabel= document.getElementById('resultLabel');
+  const confNum    = document.getElementById('confNum');
+  const confBar    = document.getElementById('confBar');
+  const allScores  = document.getElementById('allScores');
+
+  let selectedFile = null;
+
+  // Click to open file dialog
+  dropZone.addEventListener('click', () => fileInput.click());
+
+  // Drag & drop
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f) handleFile(f);
+  });
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) handleFile(fileInput.files[0]);
+  });
+
+  function handleFile(file) {
+    hideError();
+    selectedFile = file;
+    const reader = new FileReader();
+    reader.onload = e => {
+      previewImg.src = e.target.result;
+      previewImg.style.display = 'block';
+      uploadIcon.style.display = 'none';
+      dropZone.classList.add('has-image');
+      analyzeBtn.disabled = false;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  analyzeBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    hideError();
+    setLoading(true);
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try {
+      const res = await fetch('/predict', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (data.error) {
+        showError(data.error);
+        setLoading(false);
+        return;
+      }
+
+      showResult(data);
+    } catch (err) {
+      showError('Network error. Is the server running?');
+    }
+    setLoading(false);
+  });
+
+  resetBtn.addEventListener('click', () => {
+    resultCard.style.display = 'none';
+    uploadCard.style.display = 'block';
+    previewImg.style.display = 'none';
+    uploadIcon.style.display = 'flex';
+    dropZone.classList.remove('has-image');
+    analyzeBtn.disabled = true;
+    selectedFile = null;
+    fileInput.value = '';
+    confBar.style.width = '0%';
+  });
+
+  function showResult(data) {
+    uploadCard.style.display = 'none';
+    resultCard.style.display = 'block';
+
+    const isAI = data.prediction === 'AI Generated';
+    resultLabel.textContent = data.prediction;
+    resultLabel.className = 'result-label ' + (isAI ? 'ai' : 'real');
+
+    // Animate confidence counter
+    animateNumber(confNum, 0, data.confidence, 900);
+
+    // Animate bar
+    setTimeout(() => {
+      confBar.style.width = data.confidence + '%';
+      confBar.className = 'conf-bar ' + (isAI ? 'ai' : 'real');
+    }, 100);
+
+    // All scores
+    if (data.all_results && data.all_results.length > 1) {
+      allScores.innerHTML = data.all_results.map(r =>
+        `<div class="score-row">
+          <span>${r.label}</span>
+          <span class="score-val">${r.score}%</span>
+        </div>`
+      ).join('');
+    }
+  }
+
+  function animateNumber(el, from, to, duration) {
+    const start = performance.now();
+    const update = (t) => {
+      const elapsed = t - start;
+      const progress = Math.min(elapsed / duration, 1);
+      const ease = 1 - Math.pow(1 - progress, 3);
+      el.textContent = (from + (to - from) * ease).toFixed(1);
+      if (progress < 1) requestAnimationFrame(update);
+    };
+    requestAnimationFrame(update);
+  }
+
+  function setLoading(on) {
+    analyzeBtn.disabled = on;
+    btnText.style.display = on ? 'none' : 'inline';
+    btnLoader.style.display = on ? 'inline-block' : 'none';
+  }
+
+  function showError(msg) {
+    errorBox.textContent = '⚠ ' + msg;
+    errorBox.style.display = 'block';
+  }
+
+  function hideError() {
+    errorBox.style.display = 'none';
+  }
+</script>
+</body>
+</html>
